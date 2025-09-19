@@ -1,4 +1,4 @@
-# FinanceMate - Personal Finance Management App
+# BudgetNest - Personal Finance Management App
 
 A comprehensive cross-platform personal finance management app built with React Native, Expo Router, and Firebase.
 
@@ -28,19 +28,23 @@ A comprehensive cross-platform personal finance management app built with React 
 
 ## Firebase Setup
 
-1. Create a new Firebase project at https://console.firebase.google.com/
-2. Enable Authentication with Email/Password provider
-3. Create a Firestore database
-4. Enable Storage for receipt uploads
-5. Copy your Firebase configuration and create a `.env` file:
+The app is already configured with Firebase for the BudgetNest project:
+
+- **Project ID**: budgetnest-v1
+- **Package Name**: com.karthik.budgetnest
+- **Storage Bucket**: budgetnest-v1.firebasestorage.app
+
+### Environment Variables
+
+Create a `.env` file in the project root with your Firebase configuration:
 
 ```env
-EXPO_PUBLIC_FIREBASE_API_KEY=your_api_key_here
-EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=your_project_id_here
-EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project_id.appspot.com
-EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id_here
-EXPO_PUBLIC_FIREBASE_APP_ID=your_app_id_here
+EXPO_PUBLIC_FIREBASE_API_KEY=AIzaSyCTrAk1KFpmJYqc23YfnmCDMSXsqbfxHiU
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=budgetnest-v1.firebaseapp.com
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=budgetnest-v1
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=budgetnest-v1.firebasestorage.app
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=577311998285
+EXPO_PUBLIC_FIREBASE_APP_ID=1:577311998285:android:27c6df2b288da0df06b704
 ```
 
 ## Firestore Security Rules
@@ -54,9 +58,26 @@ Copy the contents of `firestore.rules.txt` to your Firebase Console > Firestore 
 npm install
 ```
 
-2. Start the development server:
+2. Create your environment file:
+```bash
+# Copy the example environment file
+cp .env.example .env
+# Edit .env with your Firebase configuration (already provided above)
+```
+
+3. Start the development server:
 ```bash
 npm run dev
+```
+
+4. For Android development:
+```bash
+npm run android
+```
+
+5. For iOS development:
+```bash
+npm run ios
 ```
 
 ## App Structure
@@ -95,14 +116,70 @@ app/
 - Firebase Security Rules enforce user ownership
 - All sensitive operations require authentication
 
+## Production Build
+
+### Android Build
+
+1. Install EAS CLI:
+```bash
+npm install -g @expo/eas-cli
+eas login
+```
+
+2. Build for Android:
+```bash
+# Build APK for testing
+eas build --platform android --profile preview
+
+# Build AAB for Play Store
+eas build --platform android --profile production
+```
+
+### iOS Build
+
+```bash
+# Build for iOS
+eas build --platform ios --profile production
+```
+
+## 🚀 Current Status
+
+✅ **Fully Implemented Features:**
+- Complete authentication system with Firebase Auth
+- Full CRUD operations for all data types (accounts, categories, transactions, budgets, goals)
+- Category management with custom icons and colors
+- Receipt upload functionality with Firebase Storage
+- Advanced transaction filtering and search
+- Data export (CSV/JSON) with native sharing
+- Dark mode theme switching with persistence
+- Real-time data synchronization
+- Comprehensive form validation and error handling
+- Loading states for all operations
+
+✅ **Firebase Integration:**
+- Authentication working perfectly
+- Firestore database configured
+- Security rules ready for deployment
+- Storage configured for receipt uploads
+
+## 🧪 Testing
+
+The app is ready for testing! See the comprehensive testing guide:
+
+- **[TESTING_GUIDE.md](./TESTING_GUIDE.md)** - Complete testing scenarios
+- **[FIRESTORE_RULES_SETUP.md](./FIRESTORE_RULES_SETUP.md)** - Security rules setup
+
+### Quick Start Testing
+```bash
+npm run dev
+```
+Then open the web URL or scan the QR code with Expo Go.
+
 ## Features in Development
 
 - Google Sign-In integration
-- Advanced transaction filtering
 - Recurring transaction templates  
-- Data export/import functionality
 - Push notifications for budget alerts
-- Dark mode support
 - Multi-currency support
 
 ## Contributing

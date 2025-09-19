@@ -9,9 +9,11 @@ import {
   ScrollView 
 } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/firebase.config';
+import { db, storage } from '../../firebase.config';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
-import { Account, Transaction } from '@/types';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as ImagePicker from 'expo-image-picker';
+import { Account, Transaction, Category } from '@/types';
 import { X, Camera, Check } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
@@ -22,14 +24,28 @@ export default function AddTransactionScreen() {
   const [type, setType] = useState<'income' | 'expense'>('expense');
   const [note, setNote] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
+  const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
 
   useEffect(() => {
     if (user) {
       loadAccounts();
+      loadCategories();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (categories.length > 0) {
+      const defaultCategory = categories.find(cat => cat.type === type);
+      if (defaultCategory) {
+        setSelectedCategory(defaultCategory.id);
+      }
+    }
+  }, [type, categories]);
 
   const loadAccounts = async () => {
     if (!user) return;
@@ -55,8 +71,93 @@ export default function AddTransactionScreen() {
     }
   };
 
+  const loadCategories = async () => {
+    if (!user) return;
+
+    try {
+      const categoriesQuery = query(
+        collection(db, 'categories'),
+        where('user_id', '==', user.id)
+      );
+      
+      const snapshot = await getDocs(categoriesQuery);
+      const categoriesList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Category));
+      
+      setCategories(categoriesList);
+      if (categoriesList.length > 0) {
+        const defaultCategory = categoriesList.find(cat => cat.type === type) || categoriesList[0];
+        setSelectedCategory(defaultCategory.id);
+      }
+    } catch (error) {
+      console.error('Error loading categories:', error);
+    }
+  };
+
+  const pickReceipt = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required', 
+          'Please grant camera roll permissions to upload receipts',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Settings', onPress: () => ImagePicker.requestMediaLibraryPermissionsAsync() }
+          ]
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setReceiptUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+    }
+  };
+
+  const uploadReceipt = async (uri: string): Promise<string | null> => {
+    if (!user) return null;
+
+    try {
+      setUploadingReceipt(true);
+      const response = await fetch(uri);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch image');
+      }
+      
+      const blob = await response.blob();
+      
+      const fileName = `receipts/${user.id}/${Date.now()}.jpg`;
+      const storageRef = ref(storage, fileName);
+      
+      await uploadBytes(storageRef, blob);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      return downloadURL;
+    } catch (error) {
+      console.error('Error uploading receipt:', error);
+      Alert.alert('Warning', 'Failed to upload receipt, but transaction will be saved without it.');
+      return null;
+    } finally {
+      setUploadingReceipt(false);
+    }
+  };
+
   const handleSubmit = async () => {
-    if (!user || !amount || !selectedAccount) {
+    if (!user || !amount || !selectedAccount || !selectedCategory) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
@@ -70,14 +171,20 @@ export default function AddTransactionScreen() {
     setLoading(true);
 
     try {
+      let receiptUrl: string | undefined;
+      if (receiptUri) {
+        receiptUrl = await uploadReceipt(receiptUri) || undefined;
+      }
+
       const newTransaction: Omit<Transaction, 'id'> = {
         user_id: user.id,
         account_id: selectedAccount,
-        category_id: 'general', // Would normally select from categories
+        category_id: selectedCategory,
         amount: numericAmount,
         type,
         date: new Date(),
         note: note.trim() || undefined,
+        receipt_url: receiptUrl,
       };
 
       await addDoc(collection(db, 'transactions'), newTransaction);
@@ -88,7 +195,8 @@ export default function AddTransactionScreen() {
         [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (error) {
-      Alert.alert('Error', 'Failed to add transaction');
+      console.error('Error adding transaction:', error);
+      Alert.alert('Error', 'Failed to add transaction. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -198,6 +306,27 @@ export default function AddTransactionScreen() {
         </View>
 
         <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Category</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={selectedCategory}
+              onValueChange={setSelectedCategory}
+              style={styles.picker}
+            >
+              {categories
+                .filter(category => category.type === type)
+                .map((category) => (
+                  <Picker.Item 
+                    key={category.id} 
+                    label={category.name} 
+                    value={category.id} 
+                  />
+                ))}
+            </Picker>
+          </View>
+        </View>
+
+        <View style={styles.field}>
           <Text style={styles.fieldLabel}>Note (Optional)</Text>
           <TextInput
             style={styles.noteInput}
@@ -209,9 +338,16 @@ export default function AddTransactionScreen() {
           />
         </View>
 
-        <TouchableOpacity style={styles.receiptButton}>
+        <TouchableOpacity 
+          style={styles.receiptButton}
+          onPress={pickReceipt}
+          disabled={uploadingReceipt}
+        >
           <Camera size={20} color="#6b7280" />
-          <Text style={styles.receiptText}>Add Receipt</Text>
+          <Text style={styles.receiptText}>
+            {receiptUri ? 'Receipt Selected' : 'Add Receipt'}
+          </Text>
+          {uploadingReceipt && <Text style={styles.uploadingText}>Uploading...</Text>}
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -384,6 +520,11 @@ const styles = StyleSheet.create({
   receiptText: {
     fontSize: 16,
     color: '#6b7280',
+  },
+  uploadingText: {
+    fontSize: 12,
+    color: '#3b82f6',
+    marginTop: 4,
   },
   emptyText: {
     fontSize: 18,

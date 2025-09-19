@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from '@/firebase.config';
+import { auth, db } from '../firebase.config';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
@@ -14,7 +14,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name: string) => Promise<void>;
+  signUp: (email: string, password: string, userData: Partial<User>) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -34,41 +34,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          setUser(userDoc.data() as User);
+      try {
+        if (firebaseUser) {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            setUser({ ...userDoc.data(), id: firebaseUser.uid } as User);
+          } else {
+            // Create user document if it doesn't exist (for existing Firebase users)
+            console.log('User document not found, creating new user document');
+            const userData: User = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email!,
+              name: firebaseUser.displayName || firebaseUser.email!.split('@')[0],
+              currency: 'USD',
+              monthlyIncome: 0,
+              created_at: new Date(),
+            };
+            await setDoc(doc(db, 'users', firebaseUser.uid), userData);
+            setUser(userData);
+          }
+        } else {
+          setUser(null);
         }
-      } else {
+      } catch (error) {
+        console.error('Error in auth state change:', error);
         setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return unsubscribe;
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+      console.error('Error in signIn:', error);
+      throw error;
+    }
   };
 
-  const signUp = async (email: string, password: string, name: string) => {
-    const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
-    
-    const userData: User = {
-      id: firebaseUser.uid,
-      email: firebaseUser.email!,
-      name,
-      currency: 'USD',
-      created_at: new Date(),
-    };
+  const signUp = async (email: string, password: string, userData: Partial<User>) => {
+    try {
+      const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
+      
+      const completeUserData: User = {
+        id: firebaseUser.uid,
+        email: firebaseUser.email!,
+        name: userData.name || '',
+        phone: userData.phone,
+        currency: userData.currency || 'USD',
+        monthlyIncome: userData.monthlyIncome || 0,
+        created_at: userData.created_at || new Date(),
+      };
 
-    await setDoc(doc(db, 'users', firebaseUser.uid), userData);
-    setUser(userData);
+      await setDoc(doc(db, 'users', firebaseUser.uid), completeUserData);
+      setUser(completeUserData);
+    } catch (error) {
+      console.error('Error in signUp:', error);
+      throw error;
+    }
   };
 
   const logout = async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error in logout:', error);
+      throw error;
+    }
   };
 
   return (

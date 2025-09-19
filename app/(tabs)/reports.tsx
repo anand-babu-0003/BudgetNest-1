@@ -1,213 +1,361 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/firebase.config';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { Transaction } from '@/types';
-import { ChartBar as BarChart, Download, TrendingUp, TrendingDown } from 'lucide-react-native';
-import { VictoryPie, VictoryChart, VictoryLine, VictoryArea } from 'victory-native';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useNavigation } from '@/app/_layout';
+import { db } from '../../firebase.config';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { Transaction, Account, Category } from '@/types';
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, Calendar, PieChart } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { ModernHeader } from '@/components/ModernHeader';
+import { ModernCard, CardHeader, CardContent } from '@/components/ModernCard';
+import { ModernButton } from '@/components/ModernButton';
+
+const { width } = Dimensions.get('window');
 
 export default function ReportsScreen() {
   const { user } = useAuth();
+  const { isDark } = useTheme();
+  const { openNavigation } = useNavigation();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<'week' | 'month' | 'year'>('month');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      loadTransactions();
+      loadData();
     }
-  }, [user]);
+  }, [user, selectedPeriod]);
 
-  const loadTransactions = async () => {
-    if (!user) return;
-
+  const loadData = async () => {
+    setLoading(true);
     try {
+      // Load transactions for the selected period
+      const startDate = getStartDate(selectedPeriod);
       const transactionsQuery = query(
         collection(db, 'transactions'),
-        where('user_id', '==', user.id)
+        where('user_id', '==', user?.id),
+        where('date', '>=', startDate),
+        orderBy('date', 'desc')
       );
-      
-      const snapshot = await getDocs(transactionsQuery);
-      const transactionsList = snapshot.docs.map(doc => ({
-        id: doc.id,
+      const transactionsSnapshot = await getDocs(transactionsQuery);
+      const transactionsData = transactionsSnapshot.docs.map(doc => ({
         ...doc.data(),
+        id: doc.id,
         date: doc.data().date.toDate()
-      } as Transaction));
-      
-      setTransactions(transactionsList);
+      })) as Transaction[];
+
+      // Load accounts
+      const accountsQuery = query(
+        collection(db, 'accounts'),
+        where('user_id', '==', user?.id)
+      );
+      const accountsSnapshot = await getDocs(accountsQuery);
+      const accountsData = accountsSnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Account[];
+
+      // Load categories
+      const categoriesQuery = query(
+        collection(db, 'categories'),
+        where('user_id', '==', user?.id)
+      );
+      const categoriesSnapshot = await getDocs(categoriesQuery);
+      const categoriesData = categoriesSnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Category[];
+
+      setTransactions(transactionsData);
+      setAccounts(accountsData);
+      setCategories(categoriesData);
     } catch (error) {
-      console.error('Error loading transactions:', error);
+      console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  const getStartDate = (period: 'week' | 'month' | 'year') => {
+    const now = new Date();
+    switch (period) {
+      case 'week':
+        return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      case 'month':
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+      case 'year':
+        return new Date(now.getFullYear(), 0, 1);
+      default:
+        return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+  };
+
   const formatCurrency = (amount: number) => {
-    return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: user?.currency || 'USD',
+    }).format(amount);
   };
 
-  const getMonthlyData = () => {
-    const monthlyData = {};
-    
-    transactions.forEach(transaction => {
-      const month = transaction.date.toISOString().slice(0, 7); // YYYY-MM format
-      if (!monthlyData[month]) {
-        monthlyData[month] = { income: 0, expenses: 0 };
-      }
-      
-      if (transaction.type === 'income') {
-        monthlyData[month].income += transaction.amount;
-      } else {
-        monthlyData[month].expenses += transaction.amount;
-      }
-    });
-
-    return Object.entries(monthlyData)
-      .map(([month, data]) => ({
-        month,
-        income: data.income,
-        expenses: data.expenses,
-        net: data.income - data.expenses
-      }))
-      .sort((a, b) => a.month.localeCompare(b.month));
+  const getCategoryName = (categoryId: string) => {
+    const category = categories.find(cat => cat.id === categoryId);
+    return category?.name || 'Unknown';
   };
 
-  const getCategoryData = () => {
-    const categoryData = {};
-    
-    transactions.filter(t => t.type === 'expense').forEach(transaction => {
-      const category = 'General'; // Would normally get from categories collection
-      if (!categoryData[category]) {
-        categoryData[category] = 0;
-      }
-      categoryData[category] += transaction.amount;
-    });
+  const getCategoryColor = (categoryId: string) => {
+    const category = categories.find(cat => cat.id === categoryId);
+    return category?.color || '#6b7280';
+  };
 
-    return Object.entries(categoryData).map(([category, amount]) => ({
-      category,
+  const getCategoryIcon = (categoryId: string) => {
+    const category = categories.find(cat => cat.id === categoryId);
+    return category?.icon || '💰';
+  };
+
+  // Calculate analytics
+  const totalIncome = transactions
+    .filter(t => t.type === 'income')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const totalExpenses = transactions
+    .filter(t => t.type === 'expense')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const netIncome = totalIncome - totalExpenses;
+
+  const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
+
+  // Top spending categories
+  const categorySpending = transactions
+    .filter(t => t.type === 'expense')
+    .reduce((acc, t) => {
+      const categoryId = t.category_id;
+      acc[categoryId] = (acc[categoryId] || 0) + t.amount;
+      return acc;
+    }, {} as Record<string, number>);
+
+  const topCategories = Object.entries(categorySpending)
+    .map(([categoryId, amount]) => ({
+      categoryId,
       amount,
-      y: amount
-    }));
-  };
+      name: getCategoryName(categoryId),
+      color: getCategoryColor(categoryId),
+      icon: getCategoryIcon(categoryId),
+    }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5);
 
-  const getTotalIncome = () => {
-    return transactions
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-  };
+  // Recent transactions
+  const recentTransactions = transactions.slice(0, 5);
 
-  const getTotalExpenses = () => {
-    return transactions
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
-  };
+  const periodOptions = [
+    { key: 'week', label: 'This Week' },
+    { key: 'month', label: 'This Month' },
+    { key: 'year', label: 'This Year' },
+  ];
 
-  const monthlyData = getMonthlyData();
-  const categoryData = getCategoryData();
-  const totalIncome = getTotalIncome();
-  const totalExpenses = getTotalExpenses();
+  const renderCategoryItem = (category: any, index: number) => (
+    <View key={category.categoryId} style={[styles.categoryItem, isDark && styles.categoryItemDark]}>
+      <View style={styles.categoryInfo}>
+        <View style={[styles.categoryIcon, { backgroundColor: category.color }]}>
+          <Text style={styles.iconText}>{category.icon}</Text>
+        </View>
+        <Text style={[styles.categoryName, isDark && styles.categoryNameDark]}>
+          {category.name}
+        </Text>
+      </View>
+      <Text style={[styles.categoryAmount, isDark && styles.categoryAmountDark]}>
+        {formatCurrency(category.amount)}
+      </Text>
+    </View>
+  );
+
+  const renderTransaction = (transaction: Transaction) => (
+    <View key={transaction.id} style={[styles.transactionItem, isDark && styles.transactionItemDark]}>
+      <View style={styles.transactionInfo}>
+        <Text style={[styles.transactionNote, isDark && styles.transactionNoteDark]}>
+          {transaction.note || 'Transaction'}
+        </Text>
+        <Text style={[styles.transactionDate, isDark && styles.transactionDateDark]}>
+          {transaction.date.toLocaleDateString()}
+        </Text>
+      </View>
+      <Text
+        style={[
+          styles.transactionAmount,
+          transaction.type === 'income' ? styles.incomeAmount : styles.expenseAmount,
+        ]}
+      >
+        {transaction.type === 'income' ? '+' : '-'}
+        {formatCurrency(transaction.amount)}
+      </Text>
+    </View>
+  );
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text>Loading reports...</Text>
+      <View style={[styles.container, isDark && styles.containerDark]}>
+        <ModernHeader
+          title="Reports"
+          subtitle="Loading analytics..."
+          onMenuPress={() => {}}
+          showNotifications={false}
+          showSearch={false}
+        />
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, isDark && styles.loadingTextDark]}>
+            Loading your financial data...
+          </Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Reports</Text>
-        <TouchableOpacity style={styles.exportButton}>
-          <Download size={20} color="#3b82f6" />
-          <Text style={styles.exportText}>Export</Text>
-        </TouchableOpacity>
-      </View>
+    <View style={[styles.container, isDark && styles.containerDark]}>
+      <ModernHeader
+        title="Reports"
+        subtitle={`${selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)} analytics`}
+        onMenuPress={() => {}}
+        showNotifications={false}
+        showSearch={false}
+      />
 
-      <View style={styles.summarySection}>
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryHeader}>
-            <TrendingUp size={20} color="#10b981" />
-            <Text style={styles.summaryTitle}>Total Income</Text>
-          </View>
-          <Text style={[styles.summaryAmount, styles.incomeText]}>
-            {formatCurrency(totalIncome)}
-          </Text>
-        </View>
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Period Selector */}
+        <ModernCard style={styles.periodCard}>
+          <CardHeader title="Time Period" />
+          <CardContent>
+            <View style={styles.periodButtons}>
+              {periodOptions.map((option) => (
+                <TouchableOpacity
+                  key={option.key}
+                  style={[
+                    styles.periodButton,
+                    selectedPeriod === option.key && styles.periodButtonActive,
+                    isDark && styles.periodButtonDark,
+                    selectedPeriod === option.key && isDark && styles.periodButtonActiveDark
+                  ]}
+                  onPress={() => setSelectedPeriod(option.key as any)}
+                >
+                  <Text
+                    style={[
+                      styles.periodButtonText,
+                      selectedPeriod === option.key && styles.periodButtonTextActive,
+                      isDark && styles.periodButtonTextDark,
+                      selectedPeriod === option.key && isDark && styles.periodButtonTextActiveDark
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </CardContent>
+        </ModernCard>
 
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryHeader}>
-            <TrendingDown size={20} color="#ef4444" />
-            <Text style={styles.summaryTitle}>Total Expenses</Text>
-          </View>
-          <Text style={[styles.summaryAmount, styles.expenseText]}>
-            {formatCurrency(totalExpenses)}
-          </Text>
-        </View>
+        {/* Financial Overview */}
+        <ModernCard style={styles.overviewCard}>
+          <CardHeader title="Financial Overview" />
+          <CardContent>
+            <View style={styles.overviewGrid}>
+              <View style={styles.overviewItem}>
+                <View style={[styles.overviewIcon, { backgroundColor: '#10b981' }]}>
+                  <TrendingUp size={20} color="#ffffff" />
+                </View>
+                <Text style={[styles.overviewLabel, isDark && styles.overviewLabelDark]}>Income</Text>
+                <Text style={[styles.overviewValue, isDark && styles.overviewValueDark]}>
+                  {formatCurrency(totalIncome)}
+                </Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <View style={[styles.overviewIcon, { backgroundColor: '#ef4444' }]}>
+                  <TrendingDown size={20} color="#ffffff" />
+                </View>
+                <Text style={[styles.overviewLabel, isDark && styles.overviewLabelDark]}>Expenses</Text>
+                <Text style={[styles.overviewValue, isDark && styles.overviewValueDark]}>
+                  {formatCurrency(totalExpenses)}
+                </Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <View style={[styles.overviewIcon, { backgroundColor: netIncome >= 0 ? '#3b82f6' : '#f59e0b' }]}>
+                  <DollarSign size={20} color="#ffffff" />
+                </View>
+                <Text style={[styles.overviewLabel, isDark && styles.overviewLabelDark]}>Net Income</Text>
+                <Text style={[styles.overviewValue, isDark && styles.overviewValueDark]}>
+                  {formatCurrency(netIncome)}
+                </Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <View style={[styles.overviewIcon, { backgroundColor: '#8b5cf6' }]}>
+                  <BarChart3 size={20} color="#ffffff" />
+                </View>
+                <Text style={[styles.overviewLabel, isDark && styles.overviewLabelDark]}>Total Balance</Text>
+                <Text style={[styles.overviewValue, isDark && styles.overviewValueDark]}>
+                  {formatCurrency(totalBalance)}
+                </Text>
+              </View>
+            </View>
+          </CardContent>
+        </ModernCard>
 
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryHeader}>
-            <BarChart size={20} color="#3b82f6" />
-            <Text style={styles.summaryTitle}>Net Income</Text>
-          </View>
-          <Text style={[
-            styles.summaryAmount, 
-            totalIncome - totalExpenses >= 0 ? styles.incomeText : styles.expenseText
-          ]}>
-            {formatCurrency(totalIncome - totalExpenses)}
-          </Text>
-        </View>
-      </View>
+        {/* Top Spending Categories */}
+        {topCategories.length > 0 && (
+          <ModernCard style={styles.categoriesCard}>
+            <CardHeader title="Top Spending Categories" />
+            <CardContent>
+              <View style={styles.categoriesList}>
+                {topCategories.map(renderCategoryItem)}
+              </View>
+            </CardContent>
+          </ModernCard>
+        )}
 
-      {categoryData.length > 0 && (
-        <View style={styles.chartSection}>
-          <Text style={styles.chartTitle}>Expenses by Category</Text>
-          <View style={styles.chartContainer}>
-            <VictoryPie
-              data={categoryData}
-              x="category"
-              y="amount"
-              width={300}
-              height={200}
-              colorScale={["#3b82f6", "#ef4444", "#f59e0b", "#10b981", "#8b5cf6"]}
+        {/* Recent Transactions */}
+        {recentTransactions.length > 0 && (
+          <ModernCard style={styles.transactionsCard}>
+            <CardHeader
+              title="Recent Transactions"
+              action={
+                <TouchableOpacity onPress={() => router.push('/(tabs)/transactions')}>
+                  <Text style={[styles.seeAllText, isDark && styles.seeAllTextDark]}>See all</Text>
+                </TouchableOpacity>
+              }
             />
-          </View>
-        </View>
-      )}
+            <CardContent>
+              <View style={styles.transactionsList}>
+                {recentTransactions.map(renderTransaction)}
+              </View>
+            </CardContent>
+          </ModernCard>
+        )}
 
-      {monthlyData.length > 0 && (
-        <View style={styles.chartSection}>
-          <Text style={styles.chartTitle}>Monthly Trends</Text>
-          <View style={styles.chartContainer}>
-            <VictoryChart width={300} height={200}>
-              <VictoryArea
-                data={monthlyData}
-                x="month"
-                y="income"
-                style={{ data: { fill: "#10b981", fillOpacity: 0.6 } }}
+        {/* Empty State */}
+        {transactions.length === 0 && (
+          <ModernCard style={styles.emptyStateCard}>
+            <View style={styles.emptyState}>
+              <BarChart3 size={48} color="#9ca3af" />
+              <Text style={[styles.emptyStateText, isDark && styles.emptyStateTextDark]}>
+                No data available
+              </Text>
+              <Text style={[styles.emptyStateSubtext, isDark && styles.emptyStateSubtextDark]}>
+                Add some transactions to see your financial reports
+              </Text>
+              <ModernButton
+                title="Add Transaction"
+                onPress={() => router.push('/add-transaction')}
+                variant="primary"
+                size="medium"
               />
-              <VictoryArea
-                data={monthlyData}
-                x="month"
-                y="expenses"
-                style={{ data: { fill: "#ef4444", fillOpacity: 0.6 } }}
-              />
-            </VictoryChart>
-          </View>
-        </View>
-      )}
-
-      {transactions.length === 0 && (
-        <View style={styles.emptyState}>
-          <BarChart size={48} color="#9ca3af" />
-          <Text style={styles.emptyText}>No data to display</Text>
-          <Text style={styles.emptySubtext}>
-            Add some transactions to see your financial reports
-          </Text>
-        </View>
-      )}
-    </ScrollView>
+            </View>
+          </ModernCard>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -216,115 +364,229 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f9fafb',
   },
-  centered: {
+  containerDark: {
+    backgroundColor: '#111827',
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
+  loadingText: {
+    fontSize: 16,
+    color: '#6b7280',
+  },
+  loadingTextDark: {
+    color: '#9ca3af',
+  },
+  periodCard: {
+    marginBottom: 20,
+  },
+  periodButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  periodButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+  },
+  periodButtonDark: {
+    backgroundColor: '#374151',
+  },
+  periodButtonActive: {
+    backgroundColor: '#3b82f6',
+  },
+  periodButtonActiveDark: {
+    backgroundColor: '#60a5fa',
+  },
+  periodButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6b7280',
+  },
+  periodButtonTextDark: {
+    color: '#9ca3af',
+  },
+  periodButtonTextActive: {
+    color: '#ffffff',
+  },
+  periodButtonTextActiveDark: {
+    color: '#ffffff',
+  },
+  overviewCard: {
+    marginBottom: 20,
+  },
+  overviewGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  overviewItem: {
+    width: (width - 80) / 2,
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+  },
+  overviewIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  overviewLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  overviewLabelDark: {
+    color: '#9ca3af',
+  },
+  overviewValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  overviewValueDark: {
+    color: '#ffffff',
+  },
+  categoriesCard: {
+    marginBottom: 20,
+  },
+  categoriesList: {
+    gap: 12,
+  },
+  categoryItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    paddingTop: 60,
-    backgroundColor: 'white',
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#f3f4f6',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1f2937',
+  categoryItemDark: {
+    borderBottomColor: '#374151',
   },
-  exportButton: {
+  categoryInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#eff6ff',
-    gap: 8,
+    flex: 1,
   },
-  exportText: {
+  categoryIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  iconText: {
+    fontSize: 16,
+  },
+  categoryName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1f2937',
+  },
+  categoryNameDark: {
+    color: '#ffffff',
+  },
+  categoryAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  categoryAmountDark: {
+    color: '#ffffff',
+  },
+  transactionsCard: {
+    marginBottom: 20,
+  },
+  seeAllText: {
+    fontSize: 14,
     color: '#3b82f6',
     fontWeight: '500',
   },
-  summarySection: {
-    padding: 20,
+  seeAllTextDark: {
+    color: '#60a5fa',
+  },
+  transactionsList: {
     gap: 12,
   },
-  summaryCard: {
-    backgroundColor: 'white',
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  summaryHeader: {
+  transactionItem: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
   },
-  summaryTitle: {
-    fontSize: 16,
+  transactionItemDark: {
+    borderBottomColor: '#374151',
+  },
+  transactionInfo: {
+    flex: 1,
+  },
+  transactionNote: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1f2937',
+    marginBottom: 2,
+  },
+  transactionNoteDark: {
+    color: '#ffffff',
+  },
+  transactionDate: {
+    fontSize: 12,
     color: '#6b7280',
-    marginLeft: 8,
   },
-  summaryAmount: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  transactionDateDark: {
+    color: '#9ca3af',
   },
-  incomeText: {
+  transactionAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  incomeAmount: {
     color: '#10b981',
   },
-  expenseText: {
+  expenseAmount: {
     color: '#ef4444',
   },
-  chartSection: {
-    backgroundColor: 'white',
-    margin: 20,
-    marginTop: 0,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  chartTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginBottom: 16,
-  },
-  chartContainer: {
-    alignItems: 'center',
+  emptyStateCard: {
+    marginTop: 40,
   },
   emptyState: {
     alignItems: 'center',
-    padding: 40,
-    margin: 20,
-    backgroundColor: 'white',
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    paddingVertical: 32,
   },
-  emptyText: {
+  emptyStateText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
+    fontWeight: '500',
     color: '#6b7280',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  emptyStateTextDark: {
+    color: '#9ca3af',
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginBottom: 16,
     textAlign: 'center',
+  },
+  emptyStateSubtextDark: {
+    color: '#6b7280',
   },
 });

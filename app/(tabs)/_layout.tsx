@@ -1,32 +1,74 @@
 import { Tabs } from 'expo-router';
-import { Chrome as Home, CreditCard, DollarSign, Target, ChartBar as BarChart3, Settings } from 'lucide-react-native';
+import { Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/contexts/ThemeContext';
+import { BlurView } from 'expo-blur';
+
+interface TabIconProps {
+  name: keyof typeof Ionicons.glyphMap;
+  color: string;
+  size?: number;
+}
+
+function TabIcon({ name, color, size = 24 }: TabIconProps) {
+  return <Ionicons name={name} size={size} color={color} />;
+}
 
 export default function TabLayout() {
+  const { colors, typography } = useTheme();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: 'white',
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#ffffff', // Pure white
           borderTopWidth: 1,
-          borderTopColor: '#e5e7eb',
-          paddingTop: 8,
-          paddingBottom: 8,
-          height: 60,
+          borderTopColor: '#e2e8f0', // Light border
+          elevation: 0,
+          height: 85,
+          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
+          paddingTop: 10,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 8,
         },
-        tabBarActiveTintColor: '#3b82f6',
-        tabBarInactiveTintColor: '#6b7280',
+        tabBarBackground: Platform.OS === 'ios' ? () => (
+          <BlurView
+            tint="light"
+            intensity={100}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              bottom: 0,
+              right: 0,
+              backgroundColor: '#ffffff' + '95', // White with opacity
+            }}
+          />
+        ) : undefined,
+        tabBarActiveTintColor: '#2563eb', // Professional blue
+        tabBarInactiveTintColor: '#94a3b8', // Light gray
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
+          fontSize: typography.sizes.xs,
+          fontWeight: '600', // Bold for professional look
+          marginTop: 4,
+        },
+        tabBarItemStyle: {
+          paddingVertical: 5,
         },
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ size, color }) => (
-            <Home size={size} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <TabIcon name="home" color={color} size={size} />
           ),
         }}
       />
@@ -34,8 +76,8 @@ export default function TabLayout() {
         name="transactions"
         options={{
           title: 'Transactions',
-          tabBarIcon: ({ size, color }) => (
-            <CreditCard size={size} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <TabIcon name="swap-horizontal" color={color} size={size} />
           ),
         }}
       />
@@ -43,26 +85,17 @@ export default function TabLayout() {
         name="accounts"
         options={{
           title: 'Accounts',
-          tabBarIcon: ({ size, color }) => (
-            <DollarSign size={size} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <TabIcon name="wallet" color={color} size={size} />
           ),
         }}
       />
       <Tabs.Screen
         name="budgets"
         options={{
-          title: 'Budgets',
-          tabBarIcon: ({ size, color }) => (
-            <Target size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="goals"
-        options={{
-          title: 'Goals',
-          tabBarIcon: ({ size, color }) => (
-            <Target size={size} color={color} />
+          title: 'Budget',
+          tabBarIcon: ({ color, size }) => (
+            <TabIcon name="pie-chart" color={color} size={size} />
           ),
         }}
       />
@@ -70,18 +103,35 @@ export default function TabLayout() {
         name="reports"
         options={{
           title: 'Reports',
-          tabBarIcon: ({ size, color }) => (
-            <BarChart3 size={size} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <TabIcon name="analytics" color={color} size={size} />
           ),
+        }}
+      />
+      
+      {/* Hidden screens that shouldn't show in tabs */}
+      <Tabs.Screen
+        name="goals"
+        options={{
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="categories"
+        options={{
+          href: null, // Hide from tab bar
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
-          tabBarIcon: ({ size, color }) => (
-            <Settings size={size} color={color} />
-          ),
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="add-transaction"
+        options={{
+          href: null, // Hide from tab bar
         }}
       />
     </Tabs>

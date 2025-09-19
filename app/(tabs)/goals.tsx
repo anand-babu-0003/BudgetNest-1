@@ -1,16 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/firebase.config';
-import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useNavigation } from '@/app/_layout';
+import { db } from '../../firebase.config';
+import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Goal } from '@/types';
-import { Plus, Target, Calendar } from 'lucide-react-native';
-import { format } from 'date-fns';
+import { Target, Plus, Edit, Trash2, Calendar, TrendingUp, CheckCircle } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { ModernHeader } from '@/components/ModernHeader';
+import { ModernCard, CardHeader, CardContent } from '@/components/ModernCard';
+import { ModernButton } from '@/components/ModernButton';
 
 export default function GoalsScreen() {
   const { user } = useAuth();
+  const { isDark } = useTheme();
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    target_amount: '',
+    current_amount: '0',
+    target_date: '',
+  });
 
   useEffect(() => {
     if (user) {
@@ -19,59 +32,111 @@ export default function GoalsScreen() {
   }, [user]);
 
   const loadGoals = async () => {
-    if (!user) return;
-
     try {
       const goalsQuery = query(
         collection(db, 'goals'),
-        where('user_id', '==', user.id)
+        where('user_id', '==', user?.id)
       );
-      
       const snapshot = await getDocs(goalsQuery);
-      const goalsList = snapshot.docs.map(doc => ({
-        id: doc.id,
+      const goalsData = snapshot.docs.map(doc => ({
         ...doc.data(),
+        id: doc.id,
         target_date: doc.data().target_date.toDate(),
         created_at: doc.data().created_at.toDate()
-      } as Goal));
-      
-      setGoals(goalsList);
+      })) as Goal[];
+      setGoals(goalsData);
     } catch (error) {
       console.error('Error loading goals:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const addSampleGoal = async () => {
-    if (!user) return;
+  const handleSave = async () => {
+    if (!formData.name || !formData.target_amount || !formData.target_date) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
 
     try {
-      const targetDate = new Date();
-      targetDate.setFullYear(targetDate.getFullYear() + 1);
-
-      const newGoal: Omit<Goal, 'id'> = {
-        user_id: user.id,
-        name: 'Emergency Fund',
-        target_amount: 10000,
-        current_amount: 2500,
-        target_date: targetDate,
+      const goalData = {
+        user_id: user?.id,
+        name: formData.name,
+        target_amount: parseFloat(formData.target_amount),
+        current_amount: parseFloat(formData.current_amount),
+        target_date: new Date(formData.target_date),
         created_at: new Date(),
       };
 
-      await addDoc(collection(db, 'goals'), newGoal);
+      if (editingGoal) {
+        await updateDoc(doc(db, 'goals', editingGoal.id), goalData);
+      } else {
+        await addDoc(collection(db, 'goals'), goalData);
+      }
+
+      setModalVisible(false);
+      setEditingGoal(null);
+      setFormData({ name: '', target_amount: '', current_amount: '0', target_date: '' });
       loadGoals();
     } catch (error) {
-      Alert.alert('Error', 'Failed to create goal');
+      Alert.alert('Error', 'Failed to save goal');
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  const handleEdit = (goal: Goal) => {
+    setEditingGoal(goal);
+    setFormData({
+      name: goal.name,
+      target_amount: goal.target_amount.toString(),
+      current_amount: goal.current_amount.toString(),
+      target_date: goal.target_date.toISOString().split('T')[0],
+    });
+    setModalVisible(true);
   };
 
-  const getGoalProgress = (current: number, target: number) => {
-    return Math.min((current / target) * 100, 100);
+  const handleDelete = (goal: Goal) => {
+    Alert.alert(
+      'Delete Goal',
+      `Are you sure you want to delete "${goal.name}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'goals', goal.id));
+              loadGoals();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete goal');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const openModal = () => {
+    setEditingGoal(null);
+    setFormData({ name: '', target_amount: '', current_amount: '0', target_date: '' });
+    setModalVisible(true);
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: user?.currency || 'USD',
+    }).format(amount);
+  };
+
+  const getProgressPercentage = (goal: Goal) => {
+    return Math.min((goal.current_amount / goal.target_amount) * 100, 100);
+  };
+
+  const getProgressColor = (goal: Goal) => {
+    const percentage = getProgressPercentage(goal);
+    if (percentage >= 100) return '#10b981';
+    if (percentage >= 75) return '#3b82f6';
+    if (percentage >= 50) return '#f59e0b';
+    return '#ef4444';
   };
 
   const getDaysRemaining = (targetDate: Date) => {
@@ -81,125 +146,244 @@ export default function GoalsScreen() {
     return diffDays;
   };
 
-  const renderGoal = ({ item }: { item: Goal }) => {
-    const progress = getGoalProgress(item.current_amount, item.target_amount);
-    const daysRemaining = getDaysRemaining(item.target_date);
-    const isCompleted = progress >= 100;
-    const isOverdue = daysRemaining < 0 && !isCompleted;
-    
+  const isGoalCompleted = (goal: Goal) => {
+    return goal.current_amount >= goal.target_amount;
+  };
+
+  const isGoalOverdue = (goal: Goal) => {
+    return new Date() > goal.target_date && !isGoalCompleted(goal);
+  };
+
+  const renderGoal = (goal: Goal) => {
+    const progressPercentage = getProgressPercentage(goal);
+    const progressColor = getProgressColor(goal);
+    const daysRemaining = getDaysRemaining(goal.target_date);
+    const isCompleted = isGoalCompleted(goal);
+    const isOverdue = isGoalOverdue(goal);
+
     return (
-      <View style={styles.goalCard}>
-        <View style={styles.goalHeader}>
-          <Text style={styles.goalName}>{item.name}</Text>
-          {isCompleted && (
-            <View style={styles.completedBadge}>
-              <Text style={styles.completedText}>✓</Text>
+      <ModernCard key={goal.id} style={styles.goalCard}>
+        <View style={styles.goalContent}>
+          <View style={styles.goalInfo}>
+            <View style={[styles.goalIcon, { backgroundColor: progressColor }]}>
+              {isCompleted ? (
+                <CheckCircle size={24} color="#ffffff" />
+              ) : (
+                <Target size={24} color="#ffffff" />
+              )}
             </View>
-          )}
-        </View>
-        
-        <View style={styles.goalAmount}>
-          <Text style={styles.currentAmount}>
-            {formatCurrency(item.current_amount)}
-          </Text>
-          <Text style={styles.targetAmount}>
-            of {formatCurrency(item.target_amount)}
-          </Text>
-        </View>
-        
-        <View style={styles.progressContainer}>
-          <View style={[styles.progressBar, { backgroundColor: '#e5e7eb' }]}>
-            <View 
-              style={[
-                styles.progressFill, 
-                { 
-                  width: `${progress}%`,
-                  backgroundColor: isCompleted ? '#10b981' : '#3b82f6'
-                }
-              ]} 
-            />
+            <View style={styles.goalDetails}>
+              <Text style={[styles.goalName, isDark && styles.goalNameDark]}>
+                {goal.name}
+              </Text>
+              <Text style={[styles.goalAmount, isDark && styles.goalAmountDark]}>
+                {formatCurrency(goal.current_amount)} / {formatCurrency(goal.target_amount)}
+              </Text>
+              <View style={styles.progressContainer}>
+                <View style={[styles.progressBar, isDark && styles.progressBarDark]}>
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { 
+                        width: `${Math.min(progressPercentage, 100)}%`,
+                        backgroundColor: progressColor
+                      }
+                    ]} 
+                  />
+                </View>
+                <Text style={[styles.progressText, isDark && styles.progressTextDark]}>
+                  {progressPercentage.toFixed(0)}%
+                </Text>
+              </View>
+              <View style={styles.goalMeta}>
+                <View style={styles.metaItem}>
+                  <Calendar size={14} color="#6b7280" />
+                  <Text style={[styles.metaText, isDark && styles.metaTextDark]}>
+                    {isOverdue ? 'Overdue' : `${daysRemaining} days left`}
+                  </Text>
+                </View>
+                {isCompleted && (
+                  <View style={styles.metaItem}>
+                    <CheckCircle size={14} color="#10b981" />
+                    <Text style={[styles.completedText, isDark && styles.completedTextDark]}>
+                      Completed
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
-          <Text style={[
-            styles.progressText, 
-            { color: isCompleted ? '#10b981' : '#3b82f6' }
-          ]}>
-            {progress.toFixed(0)}%
-          </Text>
-        </View>
-        
-        <View style={styles.goalFooter}>
-          <View style={styles.dateInfo}>
-            <Calendar size={16} color="#6b7280" />
-            <Text style={[
-              styles.dateText,
-              { color: isOverdue ? '#ef4444' : '#6b7280' }
-            ]}>
-              {isCompleted 
-                ? 'Completed!' 
-                : isOverdue 
-                  ? `${Math.abs(daysRemaining)} days overdue`
-                  : `${daysRemaining} days left`
-              }
-            </Text>
+          <View style={styles.goalActions}>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[styles.actionButton, isDark && styles.actionButtonDark]}
+                onPress={() => handleEdit(goal)}
+              >
+                <Edit size={16} color="#3b82f6" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, isDark && styles.actionButtonDark]}
+                onPress={() => handleDelete(goal)}
+              >
+                <Trash2 size={16} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
           </View>
-          <Text style={styles.targetDateText}>
-            {format(item.target_date, 'MMM dd, yyyy')}
-          </Text>
         </View>
-        
-        {!isCompleted && (
-          <Text style={styles.remainingText}>
-            {formatCurrency(item.target_amount - item.current_amount)} remaining
-          </Text>
-        )}
-      </View>
+      </ModernCard>
     );
   };
 
-  if (loading) {
-    return (
-      <View style={[styles.container, styles.centered]}>
-        <Text>Loading goals...</Text>
-      </View>
-    );
-  }
+  const activeGoals = goals.filter(goal => !isGoalCompleted(goal));
+  const completedGoals = goals.filter(goal => isGoalCompleted(goal));
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Goals</Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={addSampleGoal}
-        >
-          <Plus size={20} color="white" />
-        </TouchableOpacity>
-      </View>
+    <View style={[styles.container, isDark && styles.containerDark]}>
+      <ModernHeader
+        title="Goals"
+        subtitle={`${goals.length} goals • ${completedGoals.length} completed`}
+        onMenuPress={() => {}}
+        onNotificationPress={() => {}}
+        showNotifications={false}
+        showSearch={false}
+      />
 
-      {goals.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Target size={48} color="#9ca3af" />
-          <Text style={styles.emptyText}>No goals set</Text>
-          <Text style={styles.emptySubtext}>
-            Set financial goals to stay motivated and track your progress
-          </Text>
-          <TouchableOpacity 
-            style={styles.emptyButton}
-            onPress={addSampleGoal}
-          >
-            <Plus size={20} color="white" />
-            <Text style={styles.emptyButtonText}>Create Goal</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={goals}
-          renderItem={renderGoal}
-          keyExtractor={(item) => item.id}
-          style={styles.list}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Active Goals */}
+        {activeGoals.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <TrendingUp size={20} color="#3b82f6" />
+              <Text style={[styles.sectionTitle, isDark && styles.sectionTitleDark]}>
+                Active Goals
+              </Text>
+            </View>
+            <View style={styles.goalsList}>
+              {activeGoals.map(renderGoal)}
+            </View>
+          </View>
+        )}
+
+        {/* Completed Goals */}
+        {completedGoals.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <CheckCircle size={20} color="#10b981" />
+              <Text style={[styles.sectionTitle, isDark && styles.sectionTitleDark]}>
+                Completed Goals
+              </Text>
+            </View>
+            <View style={styles.goalsList}>
+              {completedGoals.map(renderGoal)}
+            </View>
+          </View>
+        )}
+
+        {/* Empty State */}
+        {goals.length === 0 && (
+          <ModernCard style={styles.emptyStateCard}>
+            <View style={styles.emptyState}>
+              <Target size={48} color="#9ca3af" />
+              <Text style={[styles.emptyStateText, isDark && styles.emptyStateTextDark]}>
+                No goals yet
+              </Text>
+              <Text style={[styles.emptyStateSubtext, isDark && styles.emptyStateSubtextDark]}>
+                Set financial goals to track your progress
+              </Text>
+              <ModernButton
+                title="Create Goal"
+                onPress={openModal}
+                variant="primary"
+                size="medium"
+                icon={<Plus size={20} color="#ffffff" />}
+              />
+            </View>
+          </ModernCard>
+        )}
+
+        {/* Add Goal Button */}
+        {goals.length > 0 && (
+          <View style={styles.addButtonContainer}>
+            <ModernButton
+              title="Create Goal"
+              onPress={openModal}
+              variant="outline"
+              size="large"
+              icon={<Plus size={20} color="#3b82f6" />}
+              fullWidth
+            />
+          </View>
+        )}
+
+        {/* Add/Edit Goal Modal */}
+        <Modal
+          visible={modalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+        >
+          <View style={[styles.modalContainer, isDark && styles.modalContainerDark]}>
+            <View style={[styles.modalHeader, isDark && styles.modalHeaderDark]}>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Text style={[styles.modalCancel, isDark && styles.modalCancelDark]}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, isDark && styles.modalTitleDark]}>
+                {editingGoal ? 'Edit Goal' : 'Create Goal'}
+              </Text>
+              <TouchableOpacity onPress={handleSave}>
+                <Text style={[styles.modalSave, isDark && styles.modalSaveDark]}>Save</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, isDark && styles.inputLabelDark]}>Goal Name</Text>
+                <TextInput
+                  style={[styles.modalInput, isDark && styles.modalInputDark]}
+                  value={formData.name}
+                  onChangeText={(text) => setFormData({...formData, name: text})}
+                  placeholder="Enter goal name"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, isDark && styles.inputLabelDark]}>Target Amount</Text>
+                <TextInput
+                  style={[styles.modalInput, isDark && styles.modalInputDark]}
+                  value={formData.target_amount}
+                  onChangeText={(text) => setFormData({...formData, target_amount: text})}
+                  placeholder="Enter target amount"
+                  placeholderTextColor="#9ca3af"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, isDark && styles.inputLabelDark]}>Current Amount</Text>
+                <TextInput
+                  style={[styles.modalInput, isDark && styles.modalInputDark]}
+                  value={formData.current_amount}
+                  onChangeText={(text) => setFormData({...formData, current_amount: text})}
+                  placeholder="Enter current amount"
+                  placeholderTextColor="#9ca3af"
+                  keyboardType="numeric"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, isDark && styles.inputLabelDark]}>Target Date</Text>
+                <TextInput
+                  style={[styles.modalInput, isDark && styles.modalInputDark]}
+                  value={formData.target_date}
+                  onChangeText={(text) => setFormData({...formData, target_date: text})}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#9ca3af"
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
+      </ScrollView>
     </View>
   );
 }
@@ -209,163 +393,246 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f9fafb',
   },
-  centered: {
+  containerDark: {
+    backgroundColor: '#111827',
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  section: {
+    marginBottom: 24,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginLeft: 8,
+  },
+  sectionTitleDark: {
+    color: '#ffffff',
+  },
+  goalsList: {
+    gap: 12,
+  },
+  goalCard: {
+    marginBottom: 8,
+  },
+  goalContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  goalInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+  },
+  goalIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 12,
   },
-  header: {
+  goalDetails: {
+    flex: 1,
+  },
+  goalName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  goalNameDark: {
+    color: '#ffffff',
+  },
+  goalAmount: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 8,
+  },
+  goalAmountDark: {
+    color: '#9ca3af',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  progressBar: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 3,
+    marginRight: 8,
+  },
+  progressBarDark: {
+    backgroundColor: '#374151',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+    minWidth: 30,
+  },
+  progressTextDark: {
+    color: '#9ca3af',
+  },
+  goalMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginLeft: 4,
+  },
+  metaTextDark: {
+    color: '#9ca3af',
+  },
+  completedText: {
+    fontSize: 12,
+    color: '#10b981',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  completedTextDark: {
+    color: '#10b981',
+  },
+  goalActions: {
+    alignItems: 'flex-end',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+  },
+  actionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  actionButtonDark: {
+    backgroundColor: '#374151',
+  },
+  emptyStateCard: {
+    marginTop: 40,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyStateText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  emptyStateTextDark: {
+    color: '#9ca3af',
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  emptyStateSubtextDark: {
+    color: '#6b7280',
+  },
+  addButtonContainer: {
+    marginTop: 20,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+  },
+  modalContainerDark: {
+    backgroundColor: '#111827',
+  },
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
     paddingTop: 60,
-    backgroundColor: 'white',
+    backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1f2937',
+  modalHeaderDark: {
+    backgroundColor: '#1f2937',
+    borderBottomColor: '#374151',
   },
-  addButton: {
-    backgroundColor: '#3b82f6',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+  modalCancel: {
+    fontSize: 16,
+    color: '#6b7280',
   },
-  list: {
-    flex: 1,
-    padding: 20,
+  modalCancelDark: {
+    color: '#9ca3af',
   },
-  goalCard: {
-    backgroundColor: 'white',
-    padding: 20,
-    marginBottom: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  goalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  goalName: {
+  modalTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1f2937',
-    flex: 1,
   },
-  completedBadge: {
-    width: 24,
-    height: 24,
+  modalTitleDark: {
+    color: '#ffffff',
+  },
+  modalSave: {
+    fontSize: 16,
+    color: '#3b82f6',
+    fontWeight: '600',
+  },
+  modalSaveDark: {
+    color: '#60a5fa',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  inputLabelDark: {
+    color: '#d1d5db',
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
     borderRadius: 12,
-    backgroundColor: '#10b981',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  completedText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  goalAmount: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginBottom: 16,
-  },
-  currentAmount: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1f2937',
-  },
-  targetAmount: {
+    padding: 16,
     fontSize: 16,
-    color: '#6b7280',
-    marginLeft: 8,
+    backgroundColor: '#ffffff',
   },
-  progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  progressBar: {
-    flex: 1,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 12,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  progressText: {
-    fontSize: 14,
-    fontWeight: '600',
-    minWidth: 40,
-    textAlign: 'right',
-  },
-  goalFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  dateInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dateText: {
-    fontSize: 14,
-    marginLeft: 4,
-  },
-  targetDateText: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  remainingText: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1f2937',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginBottom: 32,
-    lineHeight: 24,
-  },
-  emptyButton: {
-    backgroundColor: '#3b82f6',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 8,
-  },
-  emptyButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+  modalInputDark: {
+    borderColor: '#4b5563',
+    backgroundColor: '#374151',
+    color: '#ffffff',
   },
 });
